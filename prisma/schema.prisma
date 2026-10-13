@@ -1,0 +1,493 @@
+// ChamaVault - Kenyan Chama & Investment Group Management Platform
+// Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum MemberRole {
+  MEMBER           // Regular member
+  TREASURER        // Manages finances
+  SECRETARY        // Records minutes, documents
+  CHAIRPERSON      // Leads meetings, casts tie-breaking vote
+  ADMIN            // Platform admin (multi-chama oversight)
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  LEFT
+}
+
+enum ContributionStatus {
+  PENDING           // Expected but not yet paid
+  PAID              // Confirmed via M-Pesa
+  LATE              // Past due date, not yet paid
+  WAIVED            // Exempted by committee
+  PARTIAL           // Partially paid
+}
+
+enum ContributionType {
+  MONTHLY           // Regular monthly contribution
+  SHARES            // Share purchase
+  REGISTRATION_FEE  // One-time joining fee
+  FINE              // Penalty for missed meeting / late payment
+  SPECIAL_LEVY      // One-off special assessment
+  WELFARE           // Welfare fund contribution
+  OTHER
+}
+
+enum LoanStatus {
+  PENDING_APPROVAL
+  APPROVED
+  DISBURSED
+  ACTIVE            // Being repaid
+  FULLY_REPAID
+  DEFAULTED
+  REJECTED
+}
+
+enum LoanType {
+  EMERGENCY
+  DEVELOPMENT       // Business / investment
+  EDUCATION
+  WELFARE
+  NORMAL
+}
+
+enum MeetingType {
+  MONTHLY
+  AGM               // Annual General Meeting
+  SPECIAL
+  EMERGENCY
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ResolutionStatus {
+  DRAFT
+  OPEN
+  PASSED
+  REJECTED
+  TIED
+  CANCELLED
+}
+
+enum ResolutionType {
+  POLICY_CHANGE
+  LOAN_APPROVAL
+  MEMBER_ADMISSION
+  MEMBER_SUSPENSION
+  INVESTMENT
+  BYLAW_AMENDMENT
+  OTHER
+}
+
+enum DocumentCategory {
+  CONSTITUTION        // Chama constitution / bylaws
+  MINUTES             // Meeting minutes
+  FINANCIAL_REPORT    // Monthly / annual financials
+  MEMBER_REGISTER     // Official member list
+  INVESTMENT_REPORT
+  LOAN_AGREEMENT
+  RECEIPT
+  OTHER
+}
+
+enum MpesaTransactionType {
+  CONTRIBUTION
+  LOAN_REPAYMENT
+  LOAN_DISBURSEMENT
+  FINE
+  OTHER
+}
+
+enum MpesaTransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+  TIMEOUT
+}
+
+// ─── Chama (Group) ────────────────────────────────────────────────────────────
+
+model Chama {
+  id                  String   @id @default(cuid())
+  name                String
+  registrationNumber  String?  @unique  // e.g. "CV-2024-001"
+  description         String?
+  logoUrl             String?
+
+  // Location
+  county              String   @default("Nairobi")
+  town                String?
+
+  // Financial settings (KES)
+  monthlyContribution Float    @default(0)    // Standard monthly amount
+  shareValue          Float    @default(100)  // Value of one share in KES
+  totalShares         Int      @default(0)
+  registrationFee     Float    @default(0)
+
+  // Treasury (KES)
+  treasuryBalance     Float    @default(0)
+  welfareBalance      Float    @default(0)
+  loanBookBalance     Float    @default(0)   // Total outstanding loans
+
+  // Loan settings
+  interestRate        Float    @default(10)  // % per month
+  maxLoanMultiple     Float    @default(3)   // Max loan = X × member's total contributions
+  loanRepaymentMonths Int      @default(12)
+
+  // Governance
+  meetingDay          String?  // e.g. "First Saturday"
+  meetingVenue        String?
+  quorumPercent       Float    @default(50)
+
+  // M-Pesa paybill / till
+  mpesaPaybill        String?
+  mpesaAccountPrefix  String?  // Members append their phone as account
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  members             Member[]
+  contributions       Contribution[]
+  loans               Loan[]
+  meetings            Meeting[]
+  resolutions         Resolution[]
+  documents           Document[]
+  mpesaTransactions   MpesaTransaction[]
+  auditLogs           AuditLog[]
+  budgets             Budget[]
+}
+
+// ─── Member ───────────────────────────────────────────────────────────────────
+
+model Member {
+  id              String       @id @default(cuid())
+  firstName       String
+  lastName        String
+  email           String       @unique
+  passwordHash    String
+  phone           String       @unique  // M-Pesa registered number e.g. "0712345678"
+  nationalId      String?      // Kenyan National ID
+  role            MemberRole   @default(MEMBER)
+  status          MemberStatus @default(ACTIVE)
+
+  // Financial standing (KES)
+  totalContributed  Float      @default(0)   // Lifetime contributions
+  totalShares       Int        @default(0)
+  outstandingBalance Float     @default(0)   // Arrears owed
+
+  avatarUrl         String?
+  joinDate          DateTime   @default(now())
+  notifySMS         Boolean    @default(true)
+  notifyEmail       Boolean    @default(true)
+
+  chamaId         String
+  chama           Chama        @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  contributions   Contribution[]
+  loans           Loan[]       @relation("LoanBorrower")
+  guaranteedLoans Loan[]       @relation("LoanGuarantor")
+  voteResponses   ResolutionVote[]
+  uploadedDocs    Document[]
+  auditLogs       AuditLog[]
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([chamaId, status])
+}
+
+// ─── Contribution ─────────────────────────────────────────────────────────────
+
+model Contribution {
+  id              String             @id @default(cuid())
+  type            ContributionType   @default(MONTHLY)
+  status          ContributionStatus @default(PENDING)
+
+  // Amounts in KES
+  expectedAmount  Float
+  paidAmount      Float              @default(0)
+  penaltyAmount   Float              @default(0)
+
+  description     String?
+  periodMonth     Int                // 1–12
+  periodYear      Int
+  dueDate         DateTime
+
+  // Payment tracking
+  paidAt          DateTime?
+  mpesaRef        String?            // M-Pesa transaction code e.g. "QJK123XYZ"
+  mpesaPhone      String?
+
+  memberId        String
+  member          Member             @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  chamaId         String
+  chama           Chama              @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  mpesaTransaction  MpesaTransaction?
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([chamaId, periodYear, periodMonth])
+  @@index([memberId, status])
+}
+
+// ─── Loan ─────────────────────────────────────────────────────────────────────
+
+model Loan {
+  id              String      @id @default(cuid())
+  type            LoanType    @default(NORMAL)
+  status          LoanStatus  @default(PENDING_APPROVAL)
+
+  // Amounts in KES
+  principalAmount Float
+  interestRate    Float       // % per month at time of application
+  totalInterest   Float       @default(0)
+  totalRepayable  Float       @default(0)
+  amountRepaid    Float       @default(0)
+  outstandingBalance Float    @default(0)
+
+  purpose         String
+  repaymentMonths Int         @default(12)
+
+  // Dates
+  appliedAt       DateTime    @default(now())
+  approvedAt      DateTime?
+  disbursedAt     DateTime?
+  expectedEndDate DateTime?
+  fullyRepaidAt   DateTime?
+
+  // Disbursement
+  disbursementRef String?     // M-Pesa ref for disbursement
+  disbursementPhone String?
+
+  memberId        String
+  member          Member      @relation("LoanBorrower", fields: [memberId], references: [id])
+
+  guarantorId     String?
+  guarantor       Member?     @relation("LoanGuarantor", fields: [guarantorId], references: [id])
+
+  approvedById    String?     // Treasurer / chairperson who approved
+
+  chamaId         String
+  chama           Chama       @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  repayments      LoanRepayment[]
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([chamaId, status])
+  @@index([memberId, status])
+}
+
+model LoanRepayment {
+  id          String   @id @default(cuid())
+
+  // Amounts in KES
+  amount      Float
+  principal   Float    @default(0)
+  interest    Float    @default(0)
+
+  paidAt      DateTime @default(now())
+  mpesaRef    String?
+  mpesaPhone  String?
+  notes       String?
+
+  loanId      String
+  loan        Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+}
+
+// ─── Meeting ──────────────────────────────────────────────────────────────────
+
+model Meeting {
+  id            String        @id @default(cuid())
+  title         String
+  type          MeetingType   @default(MONTHLY)
+  status        MeetingStatus @default(SCHEDULED)
+  scheduledAt   DateTime
+  venue         String?
+  agenda        String?
+  minutes       String?       // Rich text meeting minutes
+  attendees     String[]      @default([]) // Member IDs who attended
+  quorumMet     Boolean?
+
+  chamaId       String
+  chama         Chama         @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  recordedById  String?       // Secretary
+
+  resolutions   Resolution[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([chamaId, scheduledAt])
+}
+
+// ─── Resolution (Voting) ──────────────────────────────────────────────────────
+
+model Resolution {
+  id              String           @id @default(cuid())
+  title           String
+  description     String
+  type            ResolutionType   @default(OTHER)
+  status          ResolutionStatus @default(DRAFT)
+
+  quorumPercent   Float            @default(50)
+  passingPercent  Float            @default(50)
+
+  opensAt         DateTime?
+  closesAt        DateTime?
+
+  totalEligible   Int              @default(0)
+  votesFor        Int              @default(0)
+  votesAgainst    Int              @default(0)
+  abstentions     Int              @default(0)
+  passed          Boolean?
+
+  chamaId         String
+  chama           Chama            @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  meetingId       String?
+  meeting         Meeting?         @relation(fields: [meetingId], references: [id])
+
+  votes           ResolutionVote[]
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model ResolutionVote {
+  id            String   @id @default(cuid())
+  vote          String   // "FOR" | "AGAINST" | "ABSTAIN"
+
+  resolutionId  String
+  resolution    Resolution @relation(fields: [resolutionId], references: [id], onDelete: Cascade)
+
+  memberId      String
+  member        Member   @relation(fields: [memberId], references: [id])
+
+  castAt        DateTime @default(now())
+
+  @@unique([resolutionId, memberId])
+}
+
+// ─── Document ─────────────────────────────────────────────────────────────────
+
+model Document {
+  id            String           @id @default(cuid())
+  title         String
+  description   String?
+  category      DocumentCategory @default(OTHER)
+  fileUrl       String
+  fileKey       String
+  fileName      String
+  fileSize      Int
+  mimeType      String
+  fiscalYear    Int?
+
+  chamaId       String
+  chama         Chama            @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  uploadedById  String
+  uploadedBy    Member           @relation(fields: [uploadedById], references: [id])
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([chamaId, category])
+}
+
+// ─── M-Pesa Transaction ───────────────────────────────────────────────────────
+
+model MpesaTransaction {
+  id              String                 @id @default(cuid())
+  type            MpesaTransactionType
+  status          MpesaTransactionStatus @default(PENDING)
+
+  // M-Pesa fields
+  merchantRequestId  String?
+  checkoutRequestId  String?             @unique
+  mpesaReceiptNumber String?             @unique  // e.g. "QJK123XYZ"
+  phoneNumber        String              // Sender's phone
+  amount             Float               // KES
+  resultCode         Int?
+  resultDesc         String?
+
+  // Link back to contribution or repayment
+  contributionId     String?             @unique
+  contribution       Contribution?       @relation(fields: [contributionId], references: [id])
+
+  chamaId            String
+  chama              Chama               @relation(fields: [chamaId], references: [id])
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([chamaId, status])
+  @@index([phoneNumber])
+}
+
+// ─── Budget ───────────────────────────────────────────────────────────────────
+
+model Budget {
+  id          String   @id @default(cuid())
+  fiscalYear  Int
+  category    String   // e.g. "Operations", "Investments", "Welfare"
+  budgeted    Float    // KES
+  actual      Float    @default(0)
+  notes       String?
+
+  chamaId     String
+  chama       Chama    @relation(fields: [chamaId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([chamaId, fiscalYear])
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // e.g. "CONTRIBUTION_PAID", "LOAN_APPROVED", "RESOLUTION_PASSED"
+  entityType  String
+  entityId    String
+  details     Json?
+  ipAddress   String?
+
+  memberId    String?
+  member      Member?  @relation(fields: [memberId], references: [id])
+
+  chamaId     String?
+  chama       Chama?   @relation(fields: [chamaId], references: [id])
+
+  createdAt   DateTime @default(now())
+
+  @@index([chamaId, createdAt])
+  @@index([memberId, createdAt])
+}

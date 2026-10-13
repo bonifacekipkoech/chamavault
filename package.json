@@ -1,0 +1,44 @@
+{
+  "name": "chamavault",
+  "version": "1.0.0",
+  "description": "Digital Chama & Investment Group Management Platform for Kenya",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.2.0",
+    "@prisma/client": "^5.3.0",
+    "next-auth": "^4.24.0",
+    "bcryptjs": "^2.4.3",
+    "zod": "^3.22.0",
+    "axios": "^1.6.0",
+    "tailwindcss": "^3.3.0",
+    "react-hook-form": "^7.47.0",
+    "@hookform/resolvers": "^3.3.0",
+    "recharts": "^2.10.0",
+    "date-fns": "^2.30.0",
+    "lucide-react": "^0.290.0",
+    "clsx": "^2.0.0",
+    "tailwind-merge": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/bcryptjs": "^2.4.6",
+    "prisma": "^5.3.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^8.0.0",
+    "eslint-config-next": "^14.0.0"
+  }
+}
